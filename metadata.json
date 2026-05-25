@@ -1,0 +1,5 @@
+{
+  "name": "Hermes Agent WebUI Universal",
+  "description": "Experimental portable Web UI for Hermes Agent with automatic Hermes home discovery and a local REST proxy.",
+  "requestFramePermissions": []
+}
