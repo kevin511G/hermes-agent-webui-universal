@@ -258,3 +258,7 @@ HERMES_WEB_PORT=3101 HERMES_WEB_UI_PORT=3100 ./start.sh
 - `dist`
 
 本 repository 已包含 `.gitignore`，用來阻擋常見的敏感檔案與 runtime 產物。不過在 push 之前，仍然請務必檢查 `git status`。
+
+## 授權
+
+MIT License。請見 [LICENSE](LICENSE)。

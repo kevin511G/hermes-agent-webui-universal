@@ -258,3 +258,7 @@ Before making a fork or copy public, check that you are not committing:
 - `dist`
 
 This repository includes a `.gitignore` intended to block the common risky files, but always inspect `git status` before pushing.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
