@@ -6,6 +6,8 @@
 
 ![Hermes Agent WebUI Universal 視覺圖](image/WebUI_Screenshot.png)
 
+註：此圖為作者使用環境之截圖，並不代表本專案包含 GPT-5.5 或任何需付費模型、provider access、API key 或訂閱內容。
+
 ## 這是什麼
 
 Hermes Agent WebUI Universal 會啟動一個本機 Vite frontend，以及一個 FastAPI REST proxy，用來連接你已經安裝好的 Hermes Agent。

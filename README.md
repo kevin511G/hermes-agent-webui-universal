@@ -6,6 +6,8 @@ Status: alpha. This project is useful for local testing, but the install flow, A
 
 ![Hermes Agent WebUI Universal screenshot](image/WebUI_Screenshot.png)
 
+Note: This screenshot reflects the author's local environment. It does not mean this project includes GPT-5.5 or any paid model, provider access, API key, or subscription.
+
 ## What It Does
 
 Hermes Agent WebUI Universal runs a local Vite frontend and a FastAPI REST proxy that talks to your existing Hermes Agent installation.
