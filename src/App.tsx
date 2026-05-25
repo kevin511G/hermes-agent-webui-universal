@@ -52,6 +52,14 @@ interface CronJob {
   deliver?: string;
 }
 
+interface ModelProvider {
+  slug: string;
+  name: string;
+  models: string[];
+  authenticated?: boolean;
+  warning?: string;
+}
+
 // Each chat turn: user asks → tools execute → assistant responds
 interface ChatTurn {
   id: string;
@@ -74,6 +82,10 @@ export default function App() {
   const [prevCumulativeTokens, setPrevCumulativeTokens] = React.useState(0);
   const [history, setHistory] = React.useState<Session[]>([]);
   const [cronJobs, setCronJobs] = React.useState<CronJob[]>([]);
+  const [currentProvider, setCurrentProvider] = React.useState("");
+  const [modelProviders, setModelProviders] = React.useState<ModelProvider[]>([]);
+  const [isModelLoading, setIsModelLoading] = React.useState(true);
+  const [isModelUpdating, setIsModelUpdating] = React.useState(false);
   const [isCronLoading, setIsCronLoading] = React.useState(true);
   const [isLoading, setIsLoading] = React.useState(true);
 
@@ -151,6 +163,7 @@ export default function App() {
         .then(data => {
           if (!cancelled && data?.model) {
             setCurrentModel(data.model);
+            setCurrentProvider(data.provider || "");
             if (data?.max_context_length) {
               setMaxContextTokens(data.max_context_length);
             }
@@ -161,6 +174,22 @@ export default function App() {
         })
         .finally(() => {
           if (!cancelled) setIsLoading(false);
+        });
+      fetch(`${HERMES_API_URL}/models/options`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!cancelled) {
+            setModelProviders(data?.providers || []);
+            if (data?.model) setCurrentModel(data.model);
+            if (data?.provider) setCurrentProvider(data.provider);
+          }
+        })
+        .catch(err => {
+          console.error("Failed to load model options:", err);
+          if (!cancelled) setModelProviders([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsModelLoading(false);
         });
       fetch(`${HERMES_API_URL}/health`)
         .then(r => r.ok ? r.json() : null)
@@ -531,12 +560,51 @@ export default function App() {
       });
   };
 
+  const handleModelChange = async (provider: string, model: string) => {
+    if (!provider || !model) return;
+    setIsModelUpdating(true);
+    try {
+      const res = await fetch(`${HERMES_API_URL}/models/current`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || "Failed to switch model");
+      }
+      setCurrentModel(data.model || model);
+      setCurrentProvider(data.provider || provider);
+      if (data.max_context_length) {
+        setMaxContextTokens(data.max_context_length);
+      }
+      if (data.warning) {
+        console.warn("Model switch warning:", data.warning);
+      }
+      const optionsRes = await fetch(`${HERMES_API_URL}/models/options`);
+      if (optionsRes.ok) {
+        const options = await optionsRes.json();
+        setModelProviders(options.providers || []);
+      }
+    } catch (err) {
+      console.error("Model switch failed:", err);
+      alert(`Failed to switch model: ${err instanceof Error ? err.message : "Unknown error"}`);
+    } finally {
+      setIsModelUpdating(false);
+    }
+  };
+
   return (
     <div className="flex h-screen w-full bg-chat-bg overflow-hidden">
       <Sidebar
         isOpen={isSidebarOpen}
         setIsOpen={setIsSidebarOpen}
         currentModel={currentModel}
+        currentProvider={currentProvider}
+        modelProviders={modelProviders}
+        isModelLoading={isModelLoading}
+        isModelUpdating={isModelUpdating}
+        onModelChange={handleModelChange}
         sessionId={sessionId}
         history={history}
         cronJobs={cronJobs}

@@ -31,10 +31,23 @@ interface CronJob {
   deliver?: string;
 }
 
+interface ModelProvider {
+  slug: string;
+  name: string;
+  models: string[];
+  authenticated?: boolean;
+  warning?: string;
+}
+
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   currentModel: string;
+  currentProvider: string;
+  modelProviders: ModelProvider[];
+  isModelLoading: boolean;
+  isModelUpdating: boolean;
+  onModelChange: (provider: string, model: string) => void;
   sessionId: string;
   history: Array<{ id: string; title: string; date: string; source?: string }>;
   cronJobs: CronJob[];
@@ -122,6 +135,11 @@ export function Sidebar({
   isOpen, 
   setIsOpen, 
   currentModel, 
+  currentProvider,
+  modelProviders,
+  isModelLoading,
+  isModelUpdating,
+  onModelChange,
   sessionId, 
   history,
   cronJobs,
@@ -133,6 +151,12 @@ export function Sidebar({
   apiBaseUrl
 }: SidebarProps) {
   const [activePanel, setActivePanel] = React.useState<"history" | "cron">("history");
+  const selectedModelValue = currentProvider && currentModel
+    ? `${currentProvider}::${currentModel}`
+    : "";
+  const selectableProviders = modelProviders.filter(
+    provider => provider.models && provider.models.length > 0 && provider.authenticated !== false
+  );
 
   return (
     <motion.div
@@ -169,8 +193,38 @@ export function Sidebar({
               <Cpu className="w-3 h-3" />
               <span>Current Model</span>
             </div>
-            <div className="text-sm font-medium text-slate-700 truncate">
-              {currentModel}
+            <select
+              value={selectedModelValue}
+              disabled={isModelLoading || isModelUpdating || selectableProviders.length === 0}
+              onChange={(event) => {
+                const [provider, ...modelParts] = event.target.value.split("::");
+                onModelChange(provider, modelParts.join("::"));
+              }}
+              className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-700 outline-none transition-colors hover:border-slate-300 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+              title={currentProvider ? `${currentProvider}: ${currentModel}` : currentModel}
+            >
+              {!selectedModelValue && (
+                <option value="">{isModelLoading ? "Loading models..." : "Select model"}</option>
+              )}
+              {selectedModelValue && !selectableProviders.some(provider =>
+                provider.slug === currentProvider && provider.models.includes(currentModel)
+              ) && (
+                <option value={selectedModelValue}>{currentModel}</option>
+              )}
+              {selectableProviders.map(provider => (
+                <optgroup key={provider.slug} label={provider.name || provider.slug}>
+                  {provider.models.map(model => (
+                    <option key={`${provider.slug}::${model}`} value={`${provider.slug}::${model}`}>
+                      {model}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <div className="truncate text-[10px] font-medium text-slate-400">
+              {isModelUpdating
+                ? "Updating Hermes config..."
+                : currentProvider || "Provider unavailable"}
             </div>
           </div>
 

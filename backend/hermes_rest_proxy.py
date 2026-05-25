@@ -11,6 +11,8 @@ Endpoints:
   GET  /api/sessions/{id}/changes - File changes in session
   POST /api/chat/send             - Send message, stream SSE response
   GET  /api/models/current        - Current model info
+  GET  /api/models/options        - Available provider/model choices
+  POST /api/models/current        - Update the current Hermes model
   POST /api/interrupt             - Interrupt running agent
   GET  /api/files/browse          - Browse filesystem
   GET  /api/files/content         - Get file content
@@ -138,7 +140,7 @@ except ImportError:
 # Load Hermes config
 # ---------------------------------------------------------------------------
 try:
-    from hermes_cli.config import get_hermes_home, load_config
+    from hermes_cli.config import get_hermes_home, load_config, save_config
 except ImportError as exc:
     raise SystemExit(
         "Could not import Hermes Agent modules.\n"
@@ -191,6 +193,32 @@ def _resolve_context_length() -> int:
     return 200_000
 
 MAX_CONTEXT_LENGTH = _resolve_context_length()
+
+
+def _refresh_model_state() -> None:
+    """Reload model globals from Hermes config after a model change."""
+    global _config, _model_cfg, MODEL, PROVIDER, BASE_URL, API_KEY, MAX_CONTEXT_LENGTH
+    _config = load_config()
+    _model_cfg = _config.get("model", {})
+    if isinstance(_model_cfg, dict):
+        MODEL = _model_cfg.get("default", _model_cfg.get("name", "unknown")) or "unknown"
+        PROVIDER = _model_cfg.get("provider") or None
+        BASE_URL = _model_cfg.get("base_url") or None
+        API_KEY = _model_cfg.get("api_key") or None
+    else:
+        MODEL = str(_model_cfg) if _model_cfg else "unknown"
+        PROVIDER = None
+        BASE_URL = None
+        API_KEY = None
+    MAX_CONTEXT_LENGTH = _resolve_context_length()
+
+
+def _clear_agent_cache() -> int:
+    """Drop cached agents so the next turn uses the latest model config."""
+    with _registry_lock:
+        count = len(_agents)
+        _agents.clear()
+        return count
 
 # ---------------------------------------------------------------------------
 # SQLite session store
@@ -654,6 +682,11 @@ class InterruptRequest(BaseModel):
     sessionId: Optional[str] = None
 
 
+class ModelSelectionRequest(BaseModel):
+    provider: str
+    model: str
+
+
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -942,8 +975,217 @@ def user_info():
 def get_current_model():
     return {
         "model": MODEL,
+        "provider": PROVIDER,
         "max_context_length": MAX_CONTEXT_LENGTH,
     }
+
+
+def _fallback_current_provider_row() -> Dict[str, Any]:
+    """Build a conservative model picker row for the active Hermes provider."""
+    models = _fetch_live_current_models()
+    if not models and PROVIDER:
+        try:
+            from hermes_cli.models import provider_model_ids
+
+            models = provider_model_ids(PROVIDER, force_refresh=True)
+        except Exception as exc:
+            _log.warning("Failed to probe models for provider %s: %s", PROVIDER, exc)
+
+    if MODEL and MODEL not in models:
+        models.insert(0, MODEL)
+
+    provider_name = PROVIDER or "current"
+    return {
+        "slug": provider_name,
+        "name": provider_name,
+        "is_current": True,
+        "is_user_defined": False,
+        "models": models,
+        "total_models": len(models),
+        "source": "current-config",
+        "authenticated": bool(models),
+        "base_url": BASE_URL or "",
+    }
+
+
+def _fetch_live_current_models(timeout: float = 8.0) -> List[str]:
+    """Probe the active base URL for its live model list."""
+    if not BASE_URL:
+        return []
+    try:
+        from hermes_cli.models import fetch_api_models
+
+        live_models = fetch_api_models(API_KEY or "", BASE_URL, timeout=timeout)
+    except Exception as exc:
+        _log.warning("Failed to fetch live models from current base URL: %s", exc)
+        return []
+
+    if not live_models:
+        return []
+
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for model in live_models:
+        model_id = str(model).strip()
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        deduped.append(model_id)
+    return deduped
+
+
+def _should_prefer_live_models(models: List[str]) -> bool:
+    """Custom endpoints usually need their live /models list, not canonical fallback."""
+    if not BASE_URL:
+        return False
+    provider_slug = (PROVIDER or "").strip().lower()
+    if provider_slug == "custom" or provider_slug.startswith("custom:"):
+        return True
+    return len(models) <= 1
+
+
+def _same_provider_scope(selected_provider: str) -> bool:
+    """Allow custom provider aliases that point at the current custom endpoint."""
+    current = (PROVIDER or "").strip()
+    selected = selected_provider.strip()
+    if not current or selected == current:
+        return True
+    current_lower = current.lower()
+    selected_lower = selected.lower()
+    if (
+        (current_lower == "custom" or current_lower.startswith("custom:"))
+        and (selected_lower == "custom" or selected_lower.startswith("custom:"))
+    ):
+        return True
+    return False
+
+
+@app.get("/api/models/options")
+def get_model_options():
+    try:
+        from hermes_cli.inventory import build_models_payload, load_picker_context
+
+        ctx = load_picker_context().with_overrides(
+            current_provider=PROVIDER or "",
+            current_model=MODEL or "",
+            current_base_url=BASE_URL or "",
+        )
+        payload = build_models_payload(
+            ctx,
+            include_unconfigured=True,
+            picker_hints=True,
+            canonical_order=True,
+            max_models=100,
+        )
+        current_provider = PROVIDER or payload.get("provider") or ""
+        providers = payload.get("providers") if isinstance(payload.get("providers"), list) else []
+        current_rows = [
+            row for row in providers
+            if isinstance(row, dict)
+            and (row.get("slug") == current_provider or row.get("is_current") is True)
+        ]
+
+        current_row = dict(current_rows[0]) if current_rows else _fallback_current_provider_row()
+        current_row["slug"] = current_row.get("slug") or current_provider
+        current_row["is_current"] = True
+        current_row["base_url"] = BASE_URL or current_row.get("base_url", "")
+
+        models = list(current_row.get("models") or [])
+        if _should_prefer_live_models(models):
+            live_models = _fetch_live_current_models()
+            if live_models:
+                models = live_models
+        if MODEL and MODEL not in models:
+            models.insert(0, MODEL)
+        current_row["models"] = models
+        current_row["total_models"] = len(models)
+        current_row["authenticated"] = bool(models) or current_row.get("authenticated", True)
+
+        payload["provider"] = current_row.get("slug") or current_provider
+        payload["model"] = MODEL
+        payload["providers"] = [current_row]
+        return payload
+    except Exception as exc:
+        _log.exception("Failed to load model options")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/models/current")
+def set_current_model(body: ModelSelectionRequest):
+    if not body.model.strip():
+        raise HTTPException(status_code=400, detail="Model is required")
+    if not body.provider.strip():
+        raise HTTPException(status_code=400, detail="Provider is required")
+    if PROVIDER and not _same_provider_scope(body.provider):
+        raise HTTPException(
+            status_code=400,
+            detail="The Web UI can only switch models for the current Hermes provider. Use `hermes model` to change providers.",
+        )
+
+    with _registry_lock:
+        if _agent_queues:
+            raise HTTPException(
+                status_code=409,
+                detail="A response is currently running. Stop it before switching models.",
+            )
+
+    try:
+        from hermes_cli.config import get_compatible_custom_providers
+        from hermes_cli.model_switch import switch_model
+
+        cfg = load_config()
+        user_providers = cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}
+        custom_providers = get_compatible_custom_providers(cfg)
+        result = switch_model(
+            raw_input=body.model.strip(),
+            current_provider=PROVIDER or "",
+            current_model=MODEL or "",
+            current_base_url=BASE_URL or "",
+            current_api_key=API_KEY or "",
+            is_global=True,
+            explicit_provider=body.provider.strip(),
+            user_providers=user_providers,
+            custom_providers=custom_providers,
+        )
+        if not result.success:
+            raise HTTPException(status_code=400, detail=result.error_message or "Model switch failed")
+
+        model_cfg = cfg.get("model")
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+            cfg["model"] = model_cfg
+        model_cfg["default"] = result.new_model
+        model_cfg["provider"] = result.target_provider
+        if result.base_url:
+            model_cfg["base_url"] = result.base_url
+        else:
+            model_cfg.pop("base_url", None)
+        save_config(cfg)
+
+        os.environ["HERMES_MODEL"] = result.new_model
+        os.environ["HERMES_INFERENCE_MODEL"] = result.new_model
+        if result.target_provider:
+            os.environ["HERMES_INFERENCE_PROVIDER"] = result.target_provider
+
+        _refresh_model_state()
+        cleared = _clear_agent_cache()
+        _log.info(
+            "Switched Hermes model to %s (%s); cleared %d cached agent(s)",
+            MODEL,
+            PROVIDER,
+            cleared,
+        )
+        return {
+            "model": MODEL,
+            "provider": PROVIDER,
+            "max_context_length": MAX_CONTEXT_LENGTH,
+            "warning": result.warning_message or "",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _log.exception("Failed to switch model")
+        raise HTTPException(status_code=500, detail=str(exc))
 
 # ---------------------------------------------------------------------------
 # Interrupt

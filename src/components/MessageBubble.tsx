@@ -15,9 +15,29 @@ interface MessageBubbleProps {
   key?: React.Key;
 }
 
+const USER_MESSAGE_WRAP_CHAR_LIMIT = 48;
+const USER_MESSAGE_LONG_TOKEN_LIMIT = 24;
+
+const wrapLongTextStyle: React.CSSProperties = {
+  overflowWrap: "anywhere",
+};
+
+const wrapCodeBlockStyle: React.CSSProperties = {
+  overflowWrap: "anywhere",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
+};
+
+function shouldWrapUserMessage(content: string) {
+  return (
+    content.length > USER_MESSAGE_WRAP_CHAR_LIMIT ||
+    new RegExp(`\\S{${USER_MESSAGE_LONG_TOKEN_LIMIT},}`).test(content)
+  );
+}
+
 function MarkdownRenderer({ content }: { content: string }) {
   return (
-    <div className="prose prose-sm max-w-none overflow-hidden">
+    <div className="prose prose-sm max-w-none min-w-0 overflow-hidden" style={wrapLongTextStyle}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
@@ -37,7 +57,7 @@ function MarkdownRenderer({ content }: { content: string }) {
           ),
           // Paragraphs
           p: ({ children }) => (
-            <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>
+            <p className="mb-2 last:mb-0 leading-relaxed" style={wrapLongTextStyle}>{children}</p>
           ),
           // Lists
           ul: ({ children }) => (
@@ -47,7 +67,7 @@ function MarkdownRenderer({ content }: { content: string }) {
             <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>
           ),
           li: ({ children }) => (
-            <li className="pl-1">{children}</li>
+            <li className="pl-1" style={wrapLongTextStyle}>{children}</li>
           ),
           // Code blocks
           code: ({ className, children, ...props }: any) => {
@@ -59,6 +79,7 @@ function MarkdownRenderer({ content }: { content: string }) {
               return (
                 <code
                   className="bg-slate-100 text-rose-600 px-1.5 py-0.5 rounded text-sm font-mono"
+                  style={wrapLongTextStyle}
                   {...props}
                 >
                   {children}
@@ -74,7 +95,10 @@ function MarkdownRenderer({ content }: { content: string }) {
                     {match[1]}
                   </div>
                 )}
-                <pre className="bg-[#1e1e2e] text-slate-100 rounded-lg p-4 overflow-x-auto text-sm font-mono leading-relaxed">
+                <pre
+                  className="bg-[#1e1e2e] text-slate-100 rounded-lg p-4 overflow-x-hidden text-sm font-mono leading-relaxed"
+                  style={wrapCodeBlockStyle}
+                >
                   <code className={className} {...props}>
                     {children}
                   </code>
@@ -145,6 +169,7 @@ function MarkdownRenderer({ content }: { content: string }) {
 
 export function MessageBubble({ role, content, timestamp }: MessageBubbleProps) {
   const isUser = role === "user";
+  const wrapUserMessage = isUser && shouldWrapUserMessage(content);
 
   const [copied, setCopied] = React.useState(false);
 
@@ -164,7 +189,7 @@ export function MessageBubble({ role, content, timestamp }: MessageBubbleProps) 
       )}
     >
       <div className={cn(
-        "flex gap-4",
+        "flex gap-4 min-w-0",
         isUser ? "flex-row-reverse max-w-[85%] md:max-w-[75%]" : "flex-row w-full"
       )}>
         {/* Avatar */}
@@ -176,16 +201,28 @@ export function MessageBubble({ role, content, timestamp }: MessageBubbleProps) 
         </div>
 
         {/* Content */}
-        <div className={cn("flex flex-col gap-2 min-w-0 overflow-x-hidden w-full", isUser ? "items-end" : "items-start")}>
+        <div className={cn(
+          "flex flex-col gap-2 min-w-0 overflow-x-hidden",
+          isUser
+            ? wrapUserMessage
+              ? "items-end w-full max-w-full"
+              : "items-end w-auto max-w-full flex-none"
+            : "items-start w-full"
+        )}>
           <div className={cn(
-            "px-4 py-3 rounded-2xl text-[15px] leading-relaxed overflow-x-hidden w-full",
-            isUser 
-              ? "bg-slate-100 text-slate-800 rounded-tr-none" 
-              : "bg-transparent text-slate-800 rounded-tl-none"
+            "px-4 py-3 rounded-2xl text-[15px] leading-relaxed overflow-x-hidden min-w-0 max-w-full",
+            isUser
+              ? cn(
+                  "bg-slate-100 text-slate-800 rounded-tr-none",
+                  wrapUserMessage ? "w-full" : "w-auto flex-none"
+                )
+              : "w-full bg-transparent text-slate-800 rounded-tl-none"
           )}>
             {isUser ? (
               // User messages rendered as plain text
-              content
+              <p className="m-0 whitespace-pre-wrap" style={wrapUserMessage ? wrapLongTextStyle : undefined}>
+                {content}
+              </p>
             ) : (
               // Assistant messages rendered as Markdown
               <MarkdownRenderer content={content} />
