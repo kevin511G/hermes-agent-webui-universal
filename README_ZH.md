@@ -4,6 +4,8 @@
 
 狀態：alpha。這個專案目前適合本機測試與自用，但安裝流程、API bridge、UI 行為都還可能調整。在把它開放到自己電腦以外的環境之前，請先閱讀安全提醒。
 
+![Hermes Agent WebUI Universal 視覺圖](image/WebUI_Screenshot.png)
+
 ## 這是什麼
 
 Hermes Agent WebUI Universal 會啟動一個本機 Vite frontend，以及一個 FastAPI REST proxy，用來連接你已經安裝好的 Hermes Agent。

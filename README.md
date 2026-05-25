@@ -4,6 +4,8 @@ Experimental portable Web UI for [Hermes Agent](https://hermes-agent.nousresearc
 
 Status: alpha. This project is useful for local testing, but the install flow, API bridge, and UI behavior may still change. Review the security notes before exposing it outside your own machine.
 
+![Hermes Agent WebUI Universal screenshot](image/WebUI_Screenshot.png)
+
 ## What It Does
 
 Hermes Agent WebUI Universal runs a local Vite frontend and a FastAPI REST proxy that talks to your existing Hermes Agent installation.
